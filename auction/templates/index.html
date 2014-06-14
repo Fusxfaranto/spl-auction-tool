@@ -1,0 +1,349 @@
+<html><head>
+<script type="text/javascript" src="static/jquery.min.js"></script>
+<!--<script type="text/javascript" src="static/jquery.cookie.js"></script>-->
+<script type="text/javascript" src="static/underscore-min.js"></script>
+<script type="text/javascript">
+
+(function() {
+	var login_socket = new WebSocket("ws://" + location.host + "/socket/login");
+	var chat_message_socket = new WebSocket("ws://" + location.host + "/socket/chat_message");
+	var admin_socket = null // don't want to initialize this unless we need it
+	
+	var chatbox = null;
+	
+	var username = "";
+	var token = "";
+	
+	var bid_time = -1;
+	var bid_timer = null;
+	var bid_timer_func = function() {
+		bid_time -= 1;
+		$('#bid_timer').html(bid_time);
+	};
+	var top_bids = {};
+	
+	var current_top_bid = null;
+	
+	var logged_in = false;
+	var chat_connected = false;
+	
+	var check_if_all_connected = function() {
+		if (logged_in && chat_connected) {
+			chat_message_socket.send(JSON.stringify([token, 'allconnected', null]));
+		}
+	};
+	
+	//login_socket.binaryType = 'arraybuffer';
+	
+	//login_socket.onopen = function() {alert('login_socket open');};
+	
+	login_socket.onmessage = function(e) {
+		//alert(e.data);
+		if (e.data.charAt(0) === "E") {    //error message
+			alert(e.data);
+		}
+		else if (e.data.substring(0, 5) === "Admin") {
+			token = e.data.substring(7);
+			//$.cookie("token", token);
+			$("#chat_text_input").removeAttr("disabled");
+			$("#chat_text_submit").removeAttr("disabled");
+			$("#login_text_input").attr("disabled", "");
+			$("#login_password_input").attr("disabled", "");
+			$("#login_text_submit").attr("disabled", "");
+			//alert("Login success.  Token: " + token);
+			chat_message_socket.send(JSON.stringify([token, 'join', 1]));
+    		login_socket.close();
+    		admin_socket = new WebSocket("ws://" + location.host + "/socket/admin");
+   			admin_socket.onmessage = function(e) {
+				$("#admin_output").append(e.data + '\n');
+		    	$("#admin_output").scrollTop($("#admin_output").prop("scrollHeight"));
+			};
+    		$("#admin_input").show();
+    		logged_in = true;
+			check_if_all_connected();
+		}
+		else if (e.data.substring(0, 5) === "Token") {
+			token = e.data.substring(7);
+			//$.cookie("token", token);
+			$("#chat_text_input").removeAttr("disabled");
+			$("#chat_text_submit").removeAttr("disabled");
+			$("#login_text_input").attr("disabled", "");
+			$("#login_password_input").attr("disabled", "");
+			$("#login_text_submit").attr("disabled", "");
+			//alert("Login success.  Token: " + token);
+			chat_message_socket.send(JSON.stringify([token, 'join', 1]));
+    		login_socket.close();
+    		logged_in = true;
+			check_if_all_connected();
+		}
+	};
+	
+	//login_socket.onerror = function(e) {alert('login_socket error: ' + e.data);};
+	
+	//login_socket.onclose = function() {alert('login_socket close');};
+	
+	chat_message_socket.onopen = function() {
+		//chatbox.append('hooray has opened<br>');
+		chat_message_socket.send(JSON.stringify([token, 'join', 1]));
+		chat_connected = true;
+		check_if_all_connected();
+	};
+	chat_message_socket.onmessage = function(e) {
+		if (e.data.charAt(0) === "E") {    //error message
+			alert(e.data);
+		}
+		if (e.data.charAt(0) === 'u') {
+			var l = jQuery.parseJSON(e.data.substring(1));
+			var s = '====User list===<br>';
+			var logged_in_num = 0
+			for (var i in l) {
+				if (String(l[i]) === 'null') continue;
+				s += l[i] + '<br>';
+				logged_in_num += 1;
+			}
+			s += '<br>(' + String(l.length - logged_in_num) + ' guests)';
+			$("#userlist").html(s);
+		}
+		else if (e.data.charAt(0) === 't') {
+			var l = jQuery.parseJSON(e.data.substring(1));
+			var s = '<tr><th>Team name</th><th>Code</th><th>Credits</th><th>Current Bid</th><th>Players</th></tr>';
+			for (var i in l) {
+				s += '<tr><td>' + l[i][0] + '</td><td>' + l[i][1] + '</td><td>' + l[i][2] + '</td><td><span id="top_bid_' + l[i][1] + '">0</span></td><td>' + l[i][3] + '</td></tr>';
+			}
+			$("#team_table").html(s);
+			//$("#spacer1").height(chatbox.height() - $("#team_table").height());
+		}
+		else if (e.data.charAt(0) === 'p') {
+			$("#player_display").html('');
+			var l = jQuery.parseJSON(e.data.substring(1));
+			var s = '<option value="-1">(Select a player)</option>';
+			for (var i in l) {
+				s += '<option value="' + l[i][0] + '">' + l[i][1] + '</option>';
+			}
+			$("#player_list").html(s);
+			$("#bid_div").hide();
+			$("#player_div").show();
+			$("#withdraw_button").show();
+		}
+		else if (e.data.charAt(0) === 'g') {
+			var l = jQuery.parseJSON(e.data.substring(1));
+			$("#player_display").html('<p>Name: ' + l[0] + '</p><p>Tiers: ' + l[1] + '</p>');
+		}
+		else if (e.data.charAt(0) === 'h') {
+			$("#player_div").hide();
+			$("#withdraw_button").hide();
+			$("#bid_div").hide();
+		}
+		else if (e.data.charAt(0) === 'b') {
+			$("#withdraw_button").hide();
+			$("#player_div").hide();
+			$("#bid_div").show();
+		}
+		else if (e.data.charAt(0) === 'T') {
+			bid_time = parseInt(e.data.substring(1));
+			if (bid_timer) {
+				clearInterval(bid_timer);
+				bid_timer = null;
+			}
+			if (bid_time <= 0) {
+				$('#bid_timer').html('--');
+				$("#bidee_display").html(' ');
+			}
+			else {
+				$('#bid_timer').html(e.data.substring(1));
+				bid_timer = setInterval(bid_timer_func, 1000);
+			}
+		}
+		else if (e.data.charAt(0) === 'B') {
+			//if (e.data.charAt(1) === '-') {
+			//	for (var i in top_bids) {
+			//		top_bids[i] = 0;
+			//		$("#top_bid_" + i).html('--');
+			//	}
+			//}
+			//else {
+				top_bids[e.data.substring(1, 4)] = parseInt(e.data.substring(4));
+				var max_val = 0;
+				for (var i in top_bids) {
+					if (top_bids[i] > max_val) {
+						max_val = top_bids[i];
+					}
+				}
+				for (var i in top_bids) {
+					if (top_bids[i] === max_val && max_val !== 0) {
+						$("#top_bid_" + i).html('<b>' + String(top_bids[i]) + '</b>');
+					}
+					else {
+						$("#top_bid_" + i).html(String(top_bids[i]));
+					}
+				}
+			//}
+		}
+		else if (e.data.charAt(0) === 'P') {
+			$("#bidee_display").html(e.data.substring(1));
+		}
+		else {
+			chatbox.append(e.data + '<br>');
+			//chatbox.append(e.data);
+			//chatbox.append('<br>');
+			//chatbox.html(chatbox.html() + e.data + '<br>');
+	    	chatbox.scrollTop(chatbox.prop("scrollHeight"));
+		}
+	};
+	chat_message_socket.onclose = function() {
+		chatbox.append('Disconnected');
+	    chatbox.scrollTop(chatbox.prop("scrollHeight"));
+		//if ($.cookie("token")) {
+		//	$.removeCookie("token");
+		//}
+   	};
+   	
+   	
+   	$(document).ready(function() {
+   		chatbox = $("#chatbox");
+   	
+	   	$("#chat_input").submit(function(e) {
+	   		chat_message_socket.send(JSON.stringify([token, $("#chat_text_input").val()]));
+			$("#chat_text_input").val("");
+			e.preventDefault();
+		});
+		
+	   	$("#login_input").submit(function(e) {
+	   		login_socket.send(JSON.stringify({username: $("#login_text_input").val(), password: $("#login_password_input").val()}));
+			$("#login_password_input").val("");
+			e.preventDefault();
+   		});
+   	
+	   	$("#admin_input").submit(function(e) {
+	   		admin_socket.send(JSON.stringify([token, $("#admin_text_input").val()]));
+			$("#admin_text_input").val("");
+			e.preventDefault();
+		});
+		
+		$('#player_list').change(function() {
+			var x = parseInt($(this).val());
+		    if (x > 0) {
+		   		chat_message_socket.send(JSON.stringify([token, 'getplayer', x]));
+		    }
+		});
+   	
+	   	$("#withdraw_button").click(function(e) {
+			if (confirm('Are you sure you want to withdraw?')) {
+				chat_message_socket.send(JSON.stringify([token, 'withdraw', null]));
+			}
+			e.preventDefault();
+		});
+   	
+	   	$("#player_list_submit").click(function(e) {
+			var x = parseInt($('#player_list').val());
+		    if (x > 0) {
+		   		chat_message_socket.send(JSON.stringify([token, 'submitplayer', x]));
+		    }
+			e.preventDefault();
+		});
+		
+	   	$("#bid_05").click(function(e) {
+			chat_message_socket.send(JSON.stringify([token, 'bid', 500, null]));
+			e.preventDefault();
+		});
+		
+	   	$("#bid_1").click(function(e) {
+			chat_message_socket.send(JSON.stringify([token, 'bid', 1000, null]));
+			e.preventDefault();
+		});
+		
+	   	$("#custom_bid_submit").click(function(e) {
+	   		var x = parseFloat($('#custom_bid_input').val())
+	   		if (x < 499) {
+	   			x *= 1000
+	   		}
+			chat_message_socket.send(JSON.stringify([token, 'bid', ~~x]));
+			e.preventDefault();
+		});
+   	});
+   	
+   	window.onbeforeunload = function() {
+   		chat_message_socket.close();
+   		if (admin_socket !== null) admin_socket.close();
+    	login_socket.close();
+	};
+})();
+
+</script>
+</head>
+
+<body>
+
+<form id="login_input" action="">
+Username: <input type="text" id="login_text_input">
+ Password: <input type="password" id="login_password_input">
+<input type="submit" id="login_text_submit" value="Login">
+ No account?  <a href="register">Register here.</a>
+</form>
+
+
+
+<table border="1">
+<tr><td>
+
+
+<pre id="chatbox" style="float:left; margin: 0px; padding: 6px; border: 1px inset; width: calc(100% - 15px); height: 402px; overflow: scroll; text-align: left; white-space: normal; word-wrap: break-word;" dir="ltr"></pre>
+
+</td><td>
+
+<pre id="userlist" style="float:left; margin: 0px; padding: 6px; border: 1px inset; height: 402px; overflow: scroll; text-align: left;" dir="ltr"></pre>
+
+
+</td><td>
+
+<table id="team_table" border="1" style="padding: 6px; height: 416px;">
+</table>
+ 
+<!-- <div id="spacer1">
+</div> -->
+
+</td></tr><tr><td style="vertical-align:top;">
+
+
+<form id="chat_input" action="" style="float: left;">
+<input type="text" id="chat_text_input" autocomplete="off" size="70" style="width: 70%;" disabled>
+<input type="submit" id="chat_text_submit" value="Submit" disabled>
+</form>
+
+<br><br>
+<input type="submit" id="withdraw_button" value="Withdraw from auction"  style="display: none;">
+
+</td><td style="vertical-align: top;">
+
+<span id="bid_timer" style="font-size:120px; float: center;">--</span><br>
+Player being bid on:<br>
+<strong><span id="bidee_display"> </span></strong>
+ 
+</td><td style="vertical-align: top;">
+
+<div id="bid_div" style="display: none;">
+<table border="1" style="width: 100%;">
+<tr style="height: 80px;"><td style="width: 50%;"><input type="submit" id="bid_05" value="+0.5K" style="width: 100%; height: 100%;"></td>
+<td style="width: 50%;"><input type="submit" id="bid_1" value="+1K" style="width: 100%; height: 100%;"></td></tr>
+<tr style="height: 80px;"><td style="width: 50%;"><input type="text" id="custom_bid_input" autocomplete="off" style="width: 100%; height: 100%;"></td><td style="width: 50%;"><input type="submit" id="custom_bid_submit" value="Custom Bid" style="width: 100%; height: 100%;"></td></tr>
+<!-- <tr style="height: 80px;"><td><input type="submit" id="bid_2" value="+2K" style="width: 100%; height: 100%;"></td>
+<td><input type="submit" id="bid_5" value="+5K" style="width: 100%; height: 100%;"></td></tr> -->
+</table>
+</div>
+
+<div id="player_div" style="display: none;">
+<select id="player_list"></select>
+<div id="player_display"></div>
+<input type="submit" id="player_list_submit" value="Nominate Player">
+</div>
+
+</td></tr></table>
+
+
+<form id="admin_input" action="" style="display: none;">
+<textarea id="admin_output" style="width: 400px; height: 150px;" readonly></textarea><br>
+<input type="text" id="admin_text_input" autocomplete="off" size="70" style="width: 300px;">
+<input type="submit" id="admin_text_submit" value="Console">
+</form>
+
+</body></html>

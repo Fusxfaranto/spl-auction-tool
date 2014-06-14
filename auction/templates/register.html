@@ -1,0 +1,31 @@
+<html><head><meta charset="UTF-8">
+<script type="text/javascript" src="static/jquery.min.js"></script>
+<script type="text/javascript">
+(function() {
+   	$(document).ready(function() {
+	   	$("#registration_form").submit(function(e) {
+			if ($("#password").val() !== $("#password2").val()) {
+				alert("Please ensure that the passwords match.");
+				e.preventDefault();
+			}
+   		});
+   	});
+})();
+</script>
+</head>
+
+<body>
+
+Enter registration information here.<br><br>
+
+<form id="registration_form" action="register" method="post" enctype="multipart/form-data">
+Username:<input type="text" name="username" id="username" value=""><br>
+<!-- Three letter code of team (or leave blank if none):<input type="text" name="team" id="team" value="" maxlength="3"><br> -->
+Password:<input type="password" name="password" id="password"><br>
+Retype Password:<input type="password" name="password2" id="password2"><br>
+<input type="submit" name="submit" value="Submit">
+</form><br>
+
+<a href="/">Return to main page</a>
+
+</body></html>
